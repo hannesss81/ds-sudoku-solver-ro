@@ -1,16 +1,19 @@
-import Pyro4
-
-uri = "PYRO:obj_4452f056e2064f1b916c65f155da26a2@localhost:54003"
-game = Pyro4.Proxy(uri)
-
-print(game.update_game())
-
 import json, socket, ast, threading
 import tkMessageBox
-from common import *
 from tkSimpleDialog import askstring
 from Tkinter import *
 
+import time
+
+import Pyro4
+
+from common import *
+
+DAEMON = "PYRO:obj_e321b665c9d84617bdada3aea67048d9@localhost:50458"
+
+connected = False
+
+## Menu view (JOIN-GAME, CREATE-NEW)
 class Menu():
     def __init__(self, master, nickname):
         self.nickname = nickname
@@ -23,31 +26,18 @@ class Menu():
 
     ## Setting up layout
     def create_buttons(self):
-        global SERVER, PORT
-
-        while True:
-            try:
-                SERVER = askstring("Enter server IP", "")
-                PORT = int(askstring("Enter server PORT", ""))
-                if SERVER == None or PORT == None:
-                    sys.exit(0)
-                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                client.connect((SERVER, int(PORT)))
-                client.close()
-                break
-            except Exception as e:
-                tkMessageBox.showinfo("Try again", e)
 
         self.JOIN = Button(self.frame, command=lambda: self.handle_join_game())
         self.JOIN['text'] = 'JOIN GAME'
         self.JOIN.pack({'side': 'left'})
-        self.CREATE = Button(self.frame, command=lambda: self.connect(CREATE_GAME))
+        self.CREATE = Button(self.frame, command=lambda: self.create_game(DAEMON))
         self.CREATE['text'] = 'CREATE GAME'
         self.CREATE.pack({'side': 'left'})
 
     ## Does a request of LIST_GAMES and then asks for user input.
     def handle_join_game(self):
-        games = json.loads(self.connect(LIST_GAMES))["games"]
+        games = Pyro4.Proxy(DAEMON).get_game_ids()
+        print(games)
 
         while True:
             self.JOIN["state"] = DISABLED
@@ -59,6 +49,7 @@ class Menu():
                 return
             elif game_id in games:
                 break
+
         new_window = Toplevel(self.master)
         new_window.protocol('WM_DELETE_WINDOW', lambda: self.handle_quit(new_window))
         game_view = GameView(new_window)
@@ -75,21 +66,11 @@ class Menu():
         connected = False
         context.destroy()
 
-    def connect(self, type):
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect((SERVER, PORT))
+    def create_game(self, connection_id):
+        Pyro4.Proxy(connection_id).add_game()
 
-        response = ""
-        if type == CREATE_GAME:
-            client.send(json.dumps({'req': CREATE_GAME}))
-            response = client.recv(BUFFER_SIZE)
-            assert response == DONE
-        elif type == LIST_GAMES:
-            client.send(json.dumps({'req': LIST_GAMES}))
-            response = client.recv(BUFFER_SIZE)
-        client.close()
-        return response
 
+############################################################################
 
 ## Game View GUI
 class GameView:
@@ -146,13 +127,58 @@ class GameView:
         self.score_label["text"] = scores
         self.frame.after(1000, self.periodic_update)
 
+## Separate thread which handles networking and updating data in GUI (indirectly)
+def connect_to_game(widget, game_id, nickname):
+    global connected
+    connected = True
 
+    games = Pyro4.Proxy(DAEMON)
+
+    print(nickname, game_id)
+    resp = games.join(nickname, game_id)
+    if resp == JOIN_OK:
+        thread = threading.Thread(target=poll_new_guesses, args=[widget, games, game_id, nickname])
+        thread.start()
+        while True:
+            try:
+                is_over, msg_json = games.request_game_data(game_id)
+            except Exception as e:
+                if not connected:
+                    client.close()
+                    if len(widget.scores) == 1:
+                        tkMessageBox.showinfo("Gratz", "You were the last to leave. You win!")
+                    print "Closing connection."
+                    return
+                continue
+            if is_over == False:
+                widget.state = msg_json['state'][0]
+                widget.scores = {}
+                for (nickname, score) in msg_json['players'].iteritems():
+                    widget.scores[nickname] = score
+            elif is_over == WIN:
+                tkMessageBox.showinfo("Game over", msg_json['msg'])
+                return
+    else:
+        print 'Bad response: ' + resp
+
+## Checks whether the latest_guess has been changed and needs to be sent to server
+def poll_new_guesses(widget, games, game_id, nickname):
+    while True:
+        if widget.latest_guess != "":
+            games.new_guess(widget.latest_guess, game_id, nickname)
+            print "Sent a new guess: " + widget.latest_guess
+        widget.latest_guess = ""
+        time.sleep(0.2)
+
+## Asks for nickname and then starts the Main menu
 def main():
     root = Tk()
-    nickname = ""
-    while (nickname == "") or (" " in nickname) or (len(nickname) > 8):
-        nickname = askstring("What's your nickname?", "length <= 8 and spaces not allowed")
-        if nickname is None:
-            return
+
+    nickname = "Test"
+
     app = Menu(root, nickname)
     root.mainloop()
+
+
+if __name__ == '__main__':
+    main()
