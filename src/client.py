@@ -1,4 +1,4 @@
-import json, socket, ast, threading
+import json, socket, ast, threading, struct
 import tkMessageBox
 from tkSimpleDialog import askstring
 from Tkinter import *
@@ -7,9 +7,9 @@ import time
 
 import Pyro4
 
-from common import *
+from game import *
 
-DAEMON = "PYRO:obj_e321b665c9d84617bdada3aea67048d9@localhost:50458"
+DAEMON = ""
 
 connected = False
 
@@ -170,11 +170,44 @@ def poll_new_guesses(widget, games, game_id, nickname):
         widget.latest_guess = ""
         time.sleep(0.2)
 
+uris = set()
+
+def receive_uris():
+    multicast_group = '224.0.0.1'
+    server_address = ('', 6666)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(server_address)
+
+    group = socket.inet_aton(multicast_group)
+    mreq = struct.pack('4sL', group, socket.INADDR_ANY)
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+    while True:
+        data, serv = sock.recvfrom(512)
+        uris.add(data)
+
+
+
+
 ## Asks for nickname and then starts the Main menu
 def main():
+    thread = threading.Thread(target=receive_uris)
+    thread.start()
+
     root = Tk()
 
-    nickname = "Test"
+    nickname = ""
+    while (nickname == "") or (" " in nickname) or (len(nickname) > 8):
+        nickname = askstring("What's your nickname?", "length <= 8 and spaces not allowed")
+        if nickname is None:
+            return
+
+    global DAEMON
+    DAEMON = askstring("Whats the server URI?", uris)
+
+
 
     app = Menu(root, nickname)
     root.mainloop()

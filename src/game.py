@@ -18,7 +18,6 @@ WIN = 'msg'
 
 
 def generate_solved_sudoku():
-    return "000040000008072050300105000500604002000020781000003000906000800700001500000060040", "251846379698372154374195628517684932463529781829713465946257813782431596135968247"
     solution = sudoku.generate_grid()
     game = sudoku.generate_game(solution)
     state = ''
@@ -33,7 +32,7 @@ def generate_solved_sudoku():
 
 
 @Pyro4.expose
-class Games:
+class Games:  ## Allows Pyro to manage this object over all hosts.
     latest_game = 0
     running_games = {}
 
@@ -46,7 +45,7 @@ class Games:
     def add_game(self):
         state, solution_str = generate_solved_sudoku()
         self.latest_game += 1
-        self.running_games["GAME"+str(self.latest_game)] = {"state": (state, solution_str), "players": {}, "scores": {}}
+        self.running_games["GAME" + str(self.latest_game)] = {"state": (state, solution_str), "players": {}}
         print("Added a new game.")
 
     def join(self, nickname, game_id):
@@ -65,14 +64,14 @@ class Games:
         game = self.running_games[game_id]
 
         x, y, guess = list(guess)
-        print(x,y,guess)
+        print(x, y, guess)
         if self.check_match(x, y, guess, game):
-            game["players"][nickname] = (game["players"][nickname][0] + 1, game["players"][nickname][1])
+            game["players"][nickname] = game["players"][nickname] + 1
             index = 9 * int(x) + int(y)
             modified_game_state = (game["state"][0][:index] + guess + game["state"][0][index + 1:], game["state"][1])
             game["state"] = modified_game_state
         else:
-            game["state"][nickname] = (game["player"][nickname][0] - 1, game["players"][nickname][1])
+            game["players"][nickname] = game["players"][nickname] - 1
         if game["state"][0] == game["state"][1]:
             current_winner = ""
             name = ""
@@ -82,6 +81,7 @@ class Games:
                     current_winner = name
                     current_max = score
             print("Winner: " + str(name) + ", score: " + str(score))
+        self.running_games[game_id] = game
 
     def check_match(self, x, y, guess, game):
         correct = game["state"][1]
